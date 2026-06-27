@@ -12,9 +12,12 @@ early_stage_source.py
    يحتاج مفتاح API (ROOTDATA_API_KEY)، ويُفعَّل/يُعطَّل عبر ENABLE_ROOTDATA.
    التوثيق الرسمي: https://docs.rootdata.com/
 
-2. DefiLlama — endpoint مجاني تماماً وبدون أي مفتاح API يرجع جميع جولات
-   التمويل (Raises) المسجلة على المنصة. يُفعَّل/يُعطَّل عبر ENABLE_DEFILLAMA.
-   التوثيق الرسمي: https://api-docs.defillama.com/  (مسار: /raises)
+2. DefiLlama — endpoint جولات التمويل (/raises) أصبح حسب التوثيق الرسمي
+   الحالي (https://api-docs.defillama.com/llms.txt) جزءاً من الباقة
+   المدفوعة "Pro API" ($300/شهر عبر https://defillama.com/subscription)،
+   وليس مجانياً كما كان سابقاً. لذلك أصبح يتطلب DEFILLAMA_API_KEY (اختياري:
+   لو لم يُضبط، يتم تخطي DefiLlama تلقائياً بدل إرجاع خطأ 402 متكرر).
+   يُفعَّل/يُعطَّل عبر ENABLE_DEFILLAMA.
 
 ملاحظة مهمة حول RootData:
 - بعض endpoints (من ضمنها endpoint جولات التمويل بالجملة) متاحة فقط في
@@ -30,14 +33,14 @@ import logging
 
 from config import (
     ENABLE_ROOTDATA, ROOTDATA_API_KEY,
-    ENABLE_DEFILLAMA,
+    ENABLE_DEFILLAMA, DEFILLAMA_API_KEY,
     EARLY_STAGE_LOOKBACK_DAYS,
 )
 
 logger = logging.getLogger(__name__)
 
 ROOTDATA_BASE_URL = "https://api.rootdata.com/open"
-DEFILLAMA_RAISES_URL = "https://api.llama.fi/raises"
+DEFILLAMA_FREE_RAISES_URL = "https://api.llama.fi/raises"
 
 # الكلمات المفتاحية التي تساعد على تصنيف جولة التمويل كـ RWA/Infra/DePIN/AI
 # مبكرة (هذا فلتر أولي بسيط، الفلترة الدقيقة والنهائية تتم لاحقاً عبر الـ LLM)
@@ -125,17 +128,37 @@ def _fetch_from_rootdata() -> list[dict]:
 
 def _fetch_from_defillama_raises() -> list[dict]:
     """
-    يجلب جولات التمويل من endpoint /raises المجاني في DefiLlama، ثم يستبعد
-    الجولات الأقدم من EARLY_STAGE_LOOKBACK_DAYS، ويطبّق فلتر أولي بسيط
-    على الاسم/الفئة/الوصف لإبقاء ما يخص RWA/Infra/DePIN/AI تقريباً
-    (الفلترة الدقيقة النهائية تتم عبر الـ LLM في الخطوة التالية).
+    يجلب جولات التمويل من endpoint /raises في DefiLlama.
+
+    تنبيه مهم: حسب التوثيق الرسمي الحالي (api-docs.defillama.com)،
+    endpoint /raises أصبح جزءاً من "Protocol Analytics" في الباقة
+    المدفوعة Pro API ($300/شهر)، وليس Free API كما كان سابقاً.
+    لذلك:
+    - لو DEFILLAMA_API_KEY مضبوط: نستخدم https://pro-api.llama.fi/{KEY}/api/raises
+    - لو غير مضبوط: نتخطى DefiLlama بهدوء (تحذير في اللوج فقط) بدل
+      محاولة الاتصال بالـ endpoint المجاني القديم الذي يرجع الآن
+      خطأ 402 Payment Required بشكل متكرر في كل دورة فحص.
+
+    ثم يستبعد الجولات الأقدم من EARLY_STAGE_LOOKBACK_DAYS، ويطبّق فلتر
+    أولي بسيط على الاسم/الفئة/الوصف لإبقاء ما يخص RWA/Infra/DePIN/AI
+    تقريباً (الفلترة الدقيقة النهائية تتم عبر الـ LLM في الخطوة التالية).
     """
+    if not DEFILLAMA_API_KEY:
+        logger.warning(
+            "ENABLE_DEFILLAMA=true لكن DEFILLAMA_API_KEY غير مضبوط. "
+            "endpoint /raises أصبح يتطلب باقة Pro المدفوعة من DefiLlama "
+            "(راجع https://defillama.com/subscription)، تم تخطي هذا المصدر."
+        )
+        return []
+
+    url = f"https://pro-api.llama.fi/{DEFILLAMA_API_KEY}/api/raises"
+
     try:
-        response = requests.get(DEFILLAMA_RAISES_URL, timeout=20)
+        response = requests.get(url, timeout=20)
         response.raise_for_status()
         data = response.json()
     except requests.RequestException as e:
-        logger.error(f"فشل الاتصال بـ DefiLlama API: {e}")
+        logger.error(f"فشل الاتصال بـ DefiLlama Pro API: {e}")
         return []
 
     raw_items = data.get("raises", [])
