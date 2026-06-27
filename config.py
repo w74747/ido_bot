@@ -10,10 +10,14 @@ import os
 
 # ---------- مفاتيح الـ APIs ----------
 
-# CryptoRank هو المصدر الرئيسي والإلزامي لمشاريع الـ Upcoming IDOs.
-# CoinMarketCap اختياري فقط كمصدر احتياطي إضافي (لا يلغي CryptoRank، بل يُضاف له).
+# CryptoRank: في باقة Sandbox (المجانية) لا يوجد أي endpoint يرجع مشاريع
+# IDO/Crowdsale قادمة (موثّق رسمياً)، فتم تغيير دوره بالكامل: يُستخدم فقط
+# لجلب بيانات سوق عامة سياقية عبر /v2/currencies/map (راجع ido_source.py).
+# اكتشاف فرص IDO/التمويل المبكر أصبح حصراً مسؤولية RootData وDefiLlama.
+# CRYPTORANK_API_KEY اختياري الآن: بدونه، يُتخطى هذا المصدر بهدوء فقط.
 CRYPTORANK_API_KEY = os.getenv("CRYPTORANK_API_KEY", "")
 
+# CoinMarketCap اختياري بالكامل، يُضاف فقط إذا فعّلته (لا علاقة له بالتغيير أعلاه).
 ENABLE_COINMARKETCAP = os.getenv("ENABLE_COINMARKETCAP", "false").lower() == "true"
 COINMARKETCAP_API_KEY = os.getenv("COINMARKETCAP_API_KEY", "")
 
@@ -65,6 +69,12 @@ def validate_config():
     """
     يتحقق من وجود المتغيرات الأساسية قبل تشغيل البوت،
     ويطبع تحذيرات واضحة بدل ما يفشل بصمت أو بخطأ غامض.
+
+    تنبيه مهم بعد تغيير دور CryptoRank: لم يعد إلزامياً (أصبح مصدر بيانات
+    سوق عامة اختياري فقط). الإلزامي الآن هو ضمان وجود **مصدر اكتشاف واحد
+    على الأقل فعّال** بين RootData وDefiLlama، وإلا فلن يكتشف البوت أي
+    فرصة استثمارية إطلاقاً (سيعمل بصمت دون أي خطأ، وهذا أسوأ من رفض
+    التشغيل بوضوح).
     """
     missing = []
 
@@ -73,9 +83,7 @@ def validate_config():
     if not TELEGRAM_CHAT_ID:
         missing.append("TELEGRAM_CHAT_ID")
 
-    # CryptoRank إلزامي دائماً بصفته المصدر الرئيسي
-    if not CRYPTORANK_API_KEY:
-        missing.append("CRYPTORANK_API_KEY")
+    # CryptoRank لم يعد إلزامياً: لا تحقق هنا، فقط تحذير لاحق إن أردت تفعيله بلا مفتاح.
 
     if ENABLE_COINMARKETCAP and not COINMARKETCAP_API_KEY:
         missing.append("COINMARKETCAP_API_KEY (مطلوب لأن ENABLE_COINMARKETCAP=true)")
@@ -96,4 +104,19 @@ def validate_config():
         raise EnvironmentError(
             "المتغيرات البيئية التالية مفقودة: " + ", ".join(missing) +
             "\nراجع تعليمات الإعداد في README وأضفها كـ Environment Variables."
+        )
+
+    # تحقق منفصل (تحذير فقط، لا يوقف البوت): على الأقل مصدر اكتشاف واحد
+    # فعّال وقادر على إرجاع نتائج فعلية (مفتاح موجود)، وإلا فالبوت سيعمل
+    # بدون أي اكتشاف فرص استثمارية إطلاقاً.
+    rootdata_usable = ENABLE_ROOTDATA and bool(ROOTDATA_API_KEY)
+    defillama_usable = ENABLE_DEFILLAMA and bool(DEFILLAMA_API_KEY)
+
+    if not rootdata_usable and not defillama_usable:
+        import logging
+        logging.getLogger(__name__).warning(
+            "تحذير مهم: لا يوجد أي مصدر اكتشاف فعّال (RootData وDefiLlama "
+            "كلاهما معطل أو بدون مفتاح). البوت سيعمل ويتصل بنجاح، لكنه لن "
+            "يكتشف أي فرصة استثمارية إطلاقاً في كل الدورات. فعّل أحدهما "
+            "على الأقل بمفتاح صحيح للحصول على نتائج فعلية."
         )
