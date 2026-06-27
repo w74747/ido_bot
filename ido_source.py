@@ -65,17 +65,21 @@ def _fetch_from_cryptorank() -> list[dict]:
     يجلب المشاريع القادمة (Crowd-sales/IDOs) من CryptoRank.
 
     تنبيه مهم: التوثيق الرسمي لـ CryptoRank (api.cryptorank.io/v2/docs) لا
-    يعرض اسم المسار النصي مباشرة (الصفحة تحتاج JavaScript)، فقط يصف
-    الـ endpoint بأنه "يرجع قائمة public token sales (IDO/ICO/IEO) قابلة
-    للفلترة بالحالة (active/past/upcoming)". اسم المسار الدقيق قد يختلف
-    حسب نسخة التوثيق وباقتك (Basic/Advanced/Pro)، فهذه الدالة تجرّب أكثر
-    من مسار محتمل بالتسلسل، وتستخدم أول مسار يرجع نتيجة ناجحة (وليس 404).
+    يعرض اسم المسار أو أسماء query parameters المقبولة بدقة كاملة (الصفحة
+    تحتاج JavaScript)، فهذه الدالة تجرّب أكثر من مسار/فلتر محتمل بالتسلسل:
 
-    إذا فشلت كل المسارات المحتملة بـ 404: غالباً اسم الـ endpoint الصحيح
-    لباقتك مختلف عن كل ما هو مجرَّب هنا. **الحل الموثوق 100%**: افتح
-    https://cryptorank.io/public-api/dashboard من حسابك، وانظر فعلياً
-    لقائمة الـ endpoints المتاحة لباقتك بالاسم الدقيق، وعدّل قائمة
-    CANDIDATE_PATHS أدناه بالمسار الصحيح.
+    1. لكل مسار محتمل، تُجرَّب أولاً نسخة بفلاتر (مثل hasTokenSale)،
+       فلو رجعت 400 (يعني المسار صحيح لكن اسم الفلتر مرفوض)، تتم إعادة
+       المحاولة فوراً على نفس المسار **بدون أي فلاتر إطلاقاً** كخطوة
+       احتياطية أضمن، ثم يُطبَّق فلتر بسيط من جهتنا (بايثون) بعد الجلب.
+    2. لو رجعت 404 (المسار نفسه غير موجود لباقتك)، يتم تجربة المسار التالي.
+    3. عند أي 400، نسجّل **النص الكامل لرسالة الخطأ من الـ API نفسها**
+       (response.text) في اللوج، لأنها تحتوي عادة على السبب الدقيق
+       (اسم الباراميتر المرفوض مثلاً) وهذا أدق من أي تخمين.
+
+    إذا فشلت كل المسارات نهائياً: **الحل الموثوق 100%** هو فتح
+    https://cryptorank.io/public-api/dashboard من حسابك، ومراجعة قائمة
+    الـ endpoints المتاحة فعلياً لباقتك بالاسم والباراميترات الدقيقة.
     """
     if not CRYPTORANK_API_KEY:
         logger.error("CRYPTORANK_API_KEY غير مضبوط — لا يمكن جلب المصدر الرئيسي.")
@@ -83,8 +87,7 @@ def _fetch_from_cryptorank() -> list[dict]:
 
     headers = {"X-Api-Key": CRYPTORANK_API_KEY}
 
-    # مسارات محتملة بالتسلسل (الأكثر احتمالاً أولاً حسب التوثيق العام المتاح).
-    # كل عنصر: (المسار، query params الخاصة به)
+    # كل عنصر: (المسار، query params الخاصة به للمحاولة الأولى)
     candidate_paths = [
         ("/currencies", {"hasTokenSale": "true", "limit": 100}),
         ("/crowd-sales", {"status": "upcoming"}),
@@ -92,25 +95,63 @@ def _fetch_from_cryptorank() -> list[dict]:
     ]
 
     for path, params in candidate_paths:
-        url = f"{CRYPTORANK_BASE_URL}{path}"
+        normalized = _try_cryptorank_path(path, params, headers)
+        if normalized is not None:
+            return normalized
+
+    logger.error(
+        "فشلت كل المسارات المحتملة لـ CryptoRank. "
+        "راجع https://cryptorank.io/public-api/dashboard لمعرفة اسم الـ endpoint "
+        "والباراميترات الصحيحة المتاحة لباقتك، وعدّل candidate_paths في ido_source.py."
+    )
+    return []
+
+
+def _try_cryptorank_path(path: str, params: dict, headers: dict) -> list[dict] | None:
+    """
+    يحاول مساراً واحداً من CryptoRank مع الفلاتر المعطاة. لو رجع 400،
+    يعيد المحاولة فوراً بدون أي فلاتر (limit فقط) على نفس المسار.
+    يرجع قائمة المشاريع لو نجح أي من المحاولتين، أو None لو فشل المسار
+    تماماً (404 أو خطأ آخر) للسماح بتجربة المسار التالي في القائمة.
+    """
+    url = f"{CRYPTORANK_BASE_URL}{path}"
+
+    for attempt_params, attempt_label in [
+        (params, "بالفلاتر الكاملة"),
+        ({"limit": 100}, "بدون فلاتر (محاولة احتياطية)"),
+    ]:
         try:
-            response = requests.get(url, headers=headers, params=params, timeout=20)
+            response = requests.get(url, headers=headers, params=attempt_params, timeout=20)
         except requests.RequestException as e:
-            logger.error(f"فشل الاتصال بـ CryptoRank API على المسار {path}: {e}")
+            logger.error(f"فشل الاتصال بـ CryptoRank API على المسار {path} ({attempt_label}): {e}")
             continue
 
         if response.status_code == 404:
             logger.warning(f"المسار {path} غير موجود (404) لباقتك، جاري تجربة المسار التالي...")
-            continue
+            return None
+
+        if response.status_code == 400:
+            logger.warning(
+                f"المسار {path} ({attempt_label}) رجع 400 Bad Request. "
+                f"تفاصيل الخطأ من الـ API: {response.text[:500]}"
+            )
+            continue  # جرّب المحاولة الاحتياطية بدون فلاتر، أو انتقل للمسار التالي
 
         try:
             response.raise_for_status()
             data = response.json()
         except requests.RequestException as e:
-            logger.error(f"فشل الاتصال بـ CryptoRank API على المسار {path}: {e}")
+            logger.error(f"فشل الاتصال بـ CryptoRank API على المسار {path} ({attempt_label}): {e}")
             continue
 
         raw_items = data.get("data", [])
+
+        # لو كانت هذه المحاولة الاحتياطية بدون فلاتر، نطبّق فلتراً بسيطاً
+        # من جهتنا للاحتفاظ فقط بالعملات التي لديها Token Sale فعلي (حقل
+        # hasTokenSale في الاستجابة نفسها، لا كـ query parameter).
+        if attempt_label.startswith("بدون فلاتر"):
+            raw_items = [item for item in raw_items if item.get("hasTokenSale")]
+
         normalized = [
             {
                 "id": f"cryptorank-{item.get('id', item.get('key', ''))}",
@@ -125,15 +166,16 @@ def _fetch_from_cryptorank() -> list[dict]:
             for item in raw_items
         ]
 
-        logger.info(f"نجح المسار {path} في CryptoRank — تم جلب {len(normalized)} مشروع (المصدر الرئيسي)")
+        logger.info(
+            f"نجح المسار {path} ({attempt_label}) في CryptoRank — "
+            f"تم جلب {len(normalized)} مشروع (المصدر الرئيسي)"
+        )
         return normalized
 
-    logger.error(
-        "فشلت كل المسارات المحتملة لـ CryptoRank (404 على الجميع). "
-        "راجع https://cryptorank.io/public-api/dashboard لمعرفة اسم الـ endpoint "
-        "الصحيح المتاح لباقتك، وعدّل candidate_paths في ido_source.py."
-    )
-    return []
+    # كل المحاولات على هذا المسار فشلت بـ 400، لكن المسار نفسه قد يكون
+    # صحيحاً — لا نعتبره 404 لذا لا نرجع None هنا لإيقاف التجربة بصمت،
+    # بل نسمح بالانتقال للمسار التالي في القائمة الرئيسية.
+    return None
 
 
 def _fetch_from_coinmarketcap() -> list[dict]:
