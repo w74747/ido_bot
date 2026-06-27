@@ -3,10 +3,13 @@
 main.py
 -------
 نقطة التشغيل الرئيسية للبوت. يقوم بحلقة تكرارية:
-1. يجلب مشاريع الـ IDO المُعلنة رسمياً من CryptoRank (المصدر الرئيسي،
-   مع CoinMarketCap كإضافة اختيارية)، ويجلب أيضاً جولات التمويل المبكرة
-   جداً (Seed/Series A) لمشاريع RWA/Infra/DePIN/AI من RootData وDefiLlama،
-   لضمان التغطية قبل وصول المشروع لمرحلة الطرح العام.
+1. يجلب جولات التمويل المبكرة جداً (Seed/Series A) لمشاريع RWA/Infra/
+   DePIN/AI من RootData وDefiLlama — هذا المصدر الوحيد لاكتشاف فرص
+   استثمارية فعلية، لأن باقة Sandbox في CryptoRank لا تتضمن أي endpoint
+   لمشاريع IDO قادمة (راجع التنبيه التفصيلي في ido_source.py).
+   CryptoRank يُستخدم بشكل منفصل تماماً فقط للتحقق من اتصال سوق عام
+   (راجع fetch_market_overview في ido_source.py)، ونتائجه لا تُرسل للـ
+   LLM ولا تُحتسب كفرص استثمارية.
 2. يستبعد المشاريع التي تمت معالجتها سابقاً.
 3. يرسل كل مشروع جديد إلى نموذج اللغة للتحليل الشرعي والاستثماري.
 4. إذا كان الرد ليس كلمة "تجاهل"، يرسل التقرير الناتج إلى تلجرام.
@@ -33,7 +36,7 @@ except ImportError:
     pass
 
 from config import validate_config, POLL_INTERVAL_MINUTES, IGNORE_KEYWORD
-from ido_source import fetch_upcoming_ido_projects
+from ido_source import fetch_market_overview
 from early_stage_source import fetch_early_stage_projects
 from llm_analyzer import analyze_project
 from telegram_sender import send_telegram_message
@@ -49,27 +52,32 @@ logger = logging.getLogger(__name__)
 def run_single_cycle(processed_ids: set) -> set:
     """
     يشغّل دورة فحص واحدة كاملة: جلب → فلترة → تحليل → إرسال.
-    يجمع بين طبقتين من المصادر:
-    1. CryptoRank (+ CoinMarketCap اختياري) لمشاريع الـ IDO المُعلنة رسمياً.
-    2. RootData + DefiLlama لجولات التمويل المبكرة جداً (Seed/Series A)
-       لمشاريع RWA/Infra/DePIN/AI، قبل وصولها أصلاً لمرحلة الطرح العام.
+
+    مصدران بدورين مختلفين تماماً:
+    1. CryptoRank (fetch_market_overview): بيانات سوق عامة فقط للتحقق من
+       الاتصال والسياق — **لا تُرسل للـ LLM ولا تُحتسب كفرص استثمارية**،
+       لأن باقة Sandbox لا تتضمن أي endpoint لمشاريع IDO قادمة.
+    2. RootData + DefiLlama (fetch_early_stage_projects): المصدر الفعلي
+       الوحيد لاكتشاف فرص الاستثمار، لمشاريع RWA/Infra/DePIN/AI في
+       مراحلها المبكرة جداً قبل وصولها لمرحلة الطرح العام.
+
     يرجع مجموعة المعرّفات المحدثة بعد إضافة أي مشاريع جديدة تمت معالجتها.
     """
-    official_ido_projects = fetch_upcoming_ido_projects()
-    early_stage_projects = fetch_early_stage_projects()
-
-    projects = official_ido_projects + early_stage_projects
-
-    if not projects:
-        logger.info("لا توجد مشاريع جديدة في هذه الدورة، أو فشل الجلب من كل المصادر.")
-        return processed_ids
-
+    market_overview = fetch_market_overview()
     logger.info(
-        f"إجمالي المشاريع المجلوبة: {len(projects)} "
-        f"(IDO رسمي: {len(official_ido_projects)}, مراحل مبكرة: {len(early_stage_projects)})"
+        f"تحقق من اتصال CryptoRank: {len(market_overview)} عملة في بيانات السوق "
+        f"العامة (سياقية فقط، لا تُستخدم كفرص استثمارية)."
     )
 
-    new_projects = [p for p in projects if p["id"] not in processed_ids]
+    early_stage_projects = fetch_early_stage_projects()
+
+    if not early_stage_projects:
+        logger.info("لا توجد فرص جديدة في هذه الدورة من RootData/DefiLlama.")
+        return processed_ids
+
+    logger.info(f"إجمالي الفرص المجلوبة من مصادر المراحل المبكرة: {len(early_stage_projects)}")
+
+    new_projects = [p for p in early_stage_projects if p["id"] not in processed_ids]
     logger.info(f"عدد المشاريع الجديدة (لم تُعالج سابقاً): {len(new_projects)}")
 
     for project in new_projects:
