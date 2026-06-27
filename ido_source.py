@@ -63,43 +63,77 @@ def fetch_upcoming_ido_projects() -> list[dict]:
 def _fetch_from_cryptorank() -> list[dict]:
     """
     يجلب المشاريع القادمة (Crowd-sales/IDOs) من CryptoRank.
-    التوثيق الرسمي: https://api.cryptorank.io/v2/docs
-    Endpoint الخاص بالـ IDOs/Crowdsales غالباً يكون تحت /crowd-sales
-    حسب نوع الباقة. عدّل المسار إذا اختلف في توثيق حسابك الفعلي.
+
+    تنبيه مهم: التوثيق الرسمي لـ CryptoRank (api.cryptorank.io/v2/docs) لا
+    يعرض اسم المسار النصي مباشرة (الصفحة تحتاج JavaScript)، فقط يصف
+    الـ endpoint بأنه "يرجع قائمة public token sales (IDO/ICO/IEO) قابلة
+    للفلترة بالحالة (active/past/upcoming)". اسم المسار الدقيق قد يختلف
+    حسب نسخة التوثيق وباقتك (Basic/Advanced/Pro)، فهذه الدالة تجرّب أكثر
+    من مسار محتمل بالتسلسل، وتستخدم أول مسار يرجع نتيجة ناجحة (وليس 404).
+
+    إذا فشلت كل المسارات المحتملة بـ 404: غالباً اسم الـ endpoint الصحيح
+    لباقتك مختلف عن كل ما هو مجرَّب هنا. **الحل الموثوق 100%**: افتح
+    https://cryptorank.io/public-api/dashboard من حسابك، وانظر فعلياً
+    لقائمة الـ endpoints المتاحة لباقتك بالاسم الدقيق، وعدّل قائمة
+    CANDIDATE_PATHS أدناه بالمسار الصحيح.
     """
     if not CRYPTORANK_API_KEY:
         logger.error("CRYPTORANK_API_KEY غير مضبوط — لا يمكن جلب المصدر الرئيسي.")
         return []
 
-    url = f"{CRYPTORANK_BASE_URL}/crowd-sales"
     headers = {"X-Api-Key": CRYPTORANK_API_KEY}
-    params = {"status": "upcoming"}
 
-    try:
-        response = requests.get(url, headers=headers, params=params, timeout=20)
-        response.raise_for_status()
-        data = response.json()
-    except requests.RequestException as e:
-        logger.error(f"فشل الاتصال بـ CryptoRank API: {e}")
-        return []
+    # مسارات محتملة بالتسلسل (الأكثر احتمالاً أولاً حسب التوثيق العام المتاح).
+    # كل عنصر: (المسار، query params الخاصة به)
+    candidate_paths = [
+        ("/currencies", {"hasTokenSale": "true", "limit": 100}),
+        ("/crowd-sales", {"status": "upcoming"}),
+        ("/funding-rounds", {"stage": "upcoming"}),
+    ]
 
-    raw_items = data.get("data", [])
-    normalized = []
+    for path, params in candidate_paths:
+        url = f"{CRYPTORANK_BASE_URL}{path}"
+        try:
+            response = requests.get(url, headers=headers, params=params, timeout=20)
+        except requests.RequestException as e:
+            logger.error(f"فشل الاتصال بـ CryptoRank API على المسار {path}: {e}")
+            continue
 
-    for item in raw_items:
-        normalized.append({
-            "id": f"cryptorank-{item.get('id', item.get('key', ''))}",
-            "name": item.get("name", "غير معروف"),
-            "network": item.get("network", item.get("platform", "غير محدد")),
-            "category": item.get("category", item.get("type", "غير محدد")),
-            "description": item.get("description", ""),
-            "launch_date": item.get("startDate", item.get("date", "")),
-            "source": "cryptorank",
-            "raw": item,
-        })
+        if response.status_code == 404:
+            logger.warning(f"المسار {path} غير موجود (404) لباقتك، جاري تجربة المسار التالي...")
+            continue
 
-    logger.info(f"تم جلب {len(normalized)} مشروع من CryptoRank (المصدر الرئيسي)")
-    return normalized
+        try:
+            response.raise_for_status()
+            data = response.json()
+        except requests.RequestException as e:
+            logger.error(f"فشل الاتصال بـ CryptoRank API على المسار {path}: {e}")
+            continue
+
+        raw_items = data.get("data", [])
+        normalized = [
+            {
+                "id": f"cryptorank-{item.get('id', item.get('key', ''))}",
+                "name": item.get("name", "غير معروف"),
+                "network": item.get("network", item.get("platform", "غير محدد")),
+                "category": item.get("category", item.get("type", "غير محدد")),
+                "description": item.get("description", ""),
+                "launch_date": item.get("startDate", item.get("date", "")),
+                "source": "cryptorank",
+                "raw": item,
+            }
+            for item in raw_items
+        ]
+
+        logger.info(f"نجح المسار {path} في CryptoRank — تم جلب {len(normalized)} مشروع (المصدر الرئيسي)")
+        return normalized
+
+    logger.error(
+        "فشلت كل المسارات المحتملة لـ CryptoRank (404 على الجميع). "
+        "راجع https://cryptorank.io/public-api/dashboard لمعرفة اسم الـ endpoint "
+        "الصحيح المتاح لباقتك، وعدّل candidate_paths في ido_source.py."
+    )
+    return []
 
 
 def _fetch_from_coinmarketcap() -> list[dict]:
