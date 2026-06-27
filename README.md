@@ -8,7 +8,9 @@
    والبنية التحتية (**Infrastructure / DePIN / AI**) — أي قبل أن تصل هذه
    المشاريع أصلاً لمرحلة الإعلان عن IDO رسمي — من مصدرين تكميليين:
    - **RootData** (يحتاج مفتاح API).
-   - **DefiLlama** (endpoint مجاني تماماً وبدون أي مفتاح API).
+   - **DefiLlama** (endpoint `/raises` أصبح حسب التوثيق الرسمي الحالي
+     جزءاً من باقة Pro المدفوعة، يحتاج `DEFILLAMA_API_KEY` اختياري — بدونه
+     يتم تخطي هذا المصدر بهدوء).
 3. إرسال كل مشروع جديد (من أي من المصادر أعلاه) إلى نموذج لغة
    (**Together AI** أو **DeepSeek**) مع System Prompt متخصص في الفلترة
    الشرعية والاستثمارية لمشاريع Web3.
@@ -80,7 +82,8 @@ python main.py
 | `COINMARKETCAP_API_KEY` | مفتاح CoinMarketCap (مطلوب فقط إذا `ENABLE_COINMARKETCAP=true`) |
 | `ENABLE_ROOTDATA` | `true` أو `false` (افتراضي: `true`) — تفعيل RootData لجولات التمويل المبكرة |
 | `ROOTDATA_API_KEY` | مفتاح RootData (مطلوب فقط إذا `ENABLE_ROOTDATA=true`) |
-| `ENABLE_DEFILLAMA` | `true` أو `false` (افتراضي: `true`) — تفعيل DefiLlama (لا يحتاج مفتاح API) |
+| `ENABLE_DEFILLAMA` | `true` أو `false` (افتراضي: `true`) — تفعيل DefiLlama |
+| `DEFILLAMA_API_KEY` | اختياري. مطلوب فعلياً للحصول على نتائج من `/raises` (أصبح Pro tier)، لكن بدونه البوت يستمر بالعمل ويتخطى هذا المصدر فقط |
 | `EARLY_STAGE_LOOKBACK_DAYS` | كم يوم للخلف تُعتبر فيه جولة التمويل "جديدة" (افتراضي: `30`) |
 | `LLM_PROVIDER` | `together` أو `deepseek` |
 | `TOGETHER_API_KEY` | مفتاح Together AI (إذا اخترته كمزوّد) |
@@ -104,7 +107,7 @@ python main.py
 - **CRYPTORANK_API_KEY**: من حسابك على [cryptorank.io](https://cryptorank.io) تحت إعدادات الـ API. هذا المصدر **إلزامي** بصفته المصدر الرئيسي (قد يتطلب خطة مدفوعة للوصول الكامل لبيانات الـ Crowd-sales/IDOs).
 - **COINMARKETCAP_API_KEY**: من [pro.coinmarketcap.com](https://pro.coinmarketcap.com) تحت API Keys (اختياري).
 - **ROOTDATA_API_KEY**: من [rootdata.com/Api](https://www.rootdata.com/Api) — الخطة الأساسية مجانية للبحث، لكن endpoint جولات التمويل بالجملة (`get_fac`) المستخدم في `early_stage_source.py` قد يتطلب باقة Plus/Pro حسب توثيق RootData الرسمي. تأكد من باقتك الفعلية على [docs.rootdata.com](https://docs.rootdata.com).
-- **DefiLlama**: لا يحتاج أي تسجيل أو مفتاح؛ endpoint `https://api.llama.fi/raises` مجاني ومفتوح بالكامل.
+- **DEFILLAMA_API_KEY**: من [defillama.com/subscription](https://defillama.com/subscription) (باقة Pro، $300/شهر) — endpoint `/raises` لم يعد مجانياً حسب التوثيق الرسمي الحالي. لو لا تريد دفع هذا الاشتراك، اترك المتغير فاضياً وسيتخطى البوت DefiLlama تلقائياً بدون أي خطأ.
 - **TOGETHER_API_KEY**: من [api.together.ai](https://api.together.ai).
 - **DEEPSEEK_API_KEY**: من [platform.deepseek.com](https://platform.deepseek.com).
 
@@ -132,13 +135,18 @@ python main.py
 
 ## 4. ملاحظات مهمة قبل الاستخدام الفعلي
 
-1. **توثيق الـ API الفعلي**: ملفات `ido_source.py` و`early_stage_source.py`
-   مكتوبة وفق الشكل التوثيقي المعروف لكل من CryptoRank، CoinMarketCap،
-   RootData وDefiLlama، لكن بعض endpoints (خصوصاً "Upcoming IDOs" في
-   CryptoRank وجولات التمويل بالجملة `get_fac` في RootData) قد تختلف أو
-   تتطلب باقة مدفوعة أعلى (Pro/Plus) حسب اشتراكك الفعلي. **افتح توثيق
-   حسابك الفعلي** على كل منصة وتأكد من اسم الـ endpoint الصحيح، وعدّله
-   في الدوال المعنية إن لزم الأمر.
+1. **توثيق الـ API الفعلي**: ملف `ido_source.py` يجرّب الآن تلقائياً عدة
+   مسارات محتملة بالتسلسل لـ CryptoRank (`/currencies?hasTokenSale=true`،
+   `/crowd-sales`، `/funding-rounds`)، ويستخدم أول مسار يرجع نتيجة ناجحة
+   (وليس 404). لو فشلت كل المسارات، ستظهر رسالة واضحة في الـ Logs تطلب
+   منك مراجعة [لوحة تحكم حسابك](https://cryptorank.io/public-api/dashboard)
+   لمعرفة اسم الـ endpoint الصحيح المتاح لباقتك تحديداً، وإضافته لقائمة
+   `candidate_paths` في الدالة `_fetch_from_cryptorank()`.
+   بخصوص RootData: endpoint جولات التمويل بالجملة `get_fac` موثّق رسمياً
+   بأنه يتطلب باقة Plus/Pro، وبخصوص DefiLlama: endpoint `/raises` أصبح
+   حسب التوثيق الحالي جزءاً من باقة Pro المدفوعة ($300/شهر) وليس مجانياً
+   كما كان سابقاً — لذلك أصبح `DEFILLAMA_API_KEY` اختيارياً في الكود: بدونه
+   يتخطى البوت هذا المصدر بهدوء (تحذير في اللوج) بدل تكرار خطأ 402.
 2. **الفلتر الأولي بالكلمات المفتاحية (`_looks_like_target_category`)**:
    مصادر RootData وDefiLlama قد ترجع آلاف الجولات/المشاريع غير ذات الصلة
    (Gaming، Memecoins، إلخ)، فأضفنا فلتراً سريعاً وبسيطاً بكلمات مفتاحية
