@@ -26,9 +26,12 @@ COINMARKETCAP_API_KEY = os.getenv("COINMARKETCAP_API_KEY", "")
 ENABLE_ROOTDATA = os.getenv("ENABLE_ROOTDATA", "true").lower() == "true"
 ROOTDATA_API_KEY = os.getenv("ROOTDATA_API_KEY", "")
 
-# DefiLlama: endpoint "/raises" مجاني تماماً بدون أي مفتاح API،
-# يرجع كل جولات التمويل المسجلة (Seed إلى Series C) لحظة الإعلان عنها.
+# DefiLlama: endpoint "/raises" أصبح حسب التوثيق الرسمي الحالي جزءاً من
+# باقة Pro المدفوعة ($300/شهر، عبر https://defillama.com/subscription)،
+# وليس مجانياً كما كان سابقاً. DEFILLAMA_API_KEY اختياري بالكامل: لو لم
+# يُضبط، يتم تخطي DefiLlama بهدوء (تحذير في اللوج فقط) دون إيقاف البوت.
 ENABLE_DEFILLAMA = os.getenv("ENABLE_DEFILLAMA", "true").lower() == "true"
+DEFILLAMA_API_KEY = os.getenv("DEFILLAMA_API_KEY", "")
 
 # كم يوم للخلف نعتبر فيه جولة التمويل "جديدة" (لتفادي إعادة جلب تاريخ قديم بالكامل)
 EARLY_STAGE_LOOKBACK_DAYS = int(os.getenv("EARLY_STAGE_LOOKBACK_DAYS", "30"))
@@ -80,7 +83,9 @@ def validate_config():
     if ENABLE_ROOTDATA and not ROOTDATA_API_KEY:
         missing.append("ROOTDATA_API_KEY (مطلوب لأن ENABLE_ROOTDATA=true)")
 
-    # DefiLlama لا يحتاج مفتاح API لـ endpoint الـ raises، فلا تحقق له هنا.
+    # DEFILLAMA_API_KEY اختياري بالكامل وليس إلزامياً: لو ENABLE_DEFILLAMA=true
+    # بدون مفتاح، يُسجَّل تحذير فقط ويُتخطى هذا المصدر دون إيقاف البوت،
+    # لأن /raises أصبح يتطلب اشتراكاً مدفوعاً ولا نريد فرضه على المستخدم.
 
     if LLM_PROVIDER == "together" and not TOGETHER_API_KEY:
         missing.append("TOGETHER_API_KEY")
